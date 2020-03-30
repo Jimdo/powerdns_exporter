@@ -15,6 +15,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/hashicorp/go-version"
 )
 
 type pdns struct {
@@ -64,8 +65,9 @@ func TestServerWithoutChecks(t *testing.T) {
 	defer h.Close()
 
 	hostURL, _ := url.Parse(h.URL)
+	v41, _ := version.NewVersion("4.1.0")
 
-	e := NewExporter("12345", "recursor", hostURL)
+	e := NewExporter("12345", "recursor", v41, hostURL)
 
 	ch := make(chan prometheus.Metric)
 
@@ -101,8 +103,9 @@ func TestServerWithoutChecks_Error_BrokenJSONResult(t *testing.T) {
 	defer h.Close()
 
 	hostURL, _ := url.Parse(h.URL)
+	v41, _ := version.NewVersion("4.1.0")
 
-	e := NewExporter("12345", "recursor", hostURL)
+	e := NewExporter("12345", "recursor", v41, hostURL)
 
 	ch := make(chan prometheus.Metric)
 
@@ -155,8 +158,8 @@ func TestParseServerInfo(t *testing.T) {
 	}
 }
 
-func TestCollectAuthoritativeMetrics(t *testing.T) {
-	config, err := ioutil.ReadFile("test/authoritative_stats.json")
+func TestCollectAuthoritativeMetrics41(t *testing.T) {
+	config, err := ioutil.ReadFile("test/authoritative_stats_41.json")
 	if err != nil {
 		t.Fatalf("could not read config file: %v", err.Error())
 	}
@@ -165,8 +168,9 @@ func TestCollectAuthoritativeMetrics(t *testing.T) {
 	defer h.Close()
 
 	hostURL, _ := url.Parse(h.URL)
+	v41, _ := version.NewVersion("4.1.0")
 
-	e := NewExporter("12345", "authoritative", hostURL)
+	e := NewExporter("12345", "authoritative", v41, hostURL)
 
 	testCases := []struct {
 		metricName string
@@ -189,6 +193,10 @@ func TestCollectAuthoritativeMetrics(t *testing.T) {
 				powerdns_authoritative_latency_average_seconds 0.001308
 			`,
 		},
+		{
+			metricName: "powerdns_authoritative_queries_nxdomain",
+			expected: ``,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -196,6 +204,60 @@ func TestCollectAuthoritativeMetrics(t *testing.T) {
 		assert.NoError(t, err)
 	}
 }
+
+func TestCollectAuthoritativeMetrics42(t *testing.T) {
+	config, err := ioutil.ReadFile("test/authoritative_stats_42.json")
+	if err != nil {
+		t.Fatalf("could not read config file: %v", err.Error())
+	}
+
+	h := newPowerDNS(config)
+	defer h.Close()
+
+	hostURL, _ := url.Parse(h.URL)
+	v42, _ := version.NewVersion("4.2.0")
+
+	e := NewExporter("12345", "authoritative", v42, hostURL)
+
+	testCases := []struct {
+		metricName string
+		expected   string
+	}{
+		{
+			metricName: "powerdns_authoritative_cpu_utilisation",
+			expected: `
+				# HELP powerdns_authoritative_cpu_utilisation Number of CPU milliseconds spent in user, and kernel space
+				# TYPE powerdns_authoritative_cpu_utilisation counter
+				powerdns_authoritative_cpu_utilisation{type="sys"} 1729
+				powerdns_authoritative_cpu_utilisation{type="user"} 1877
+			`,
+		},
+		{
+			metricName: "powerdns_authoritative_latency_average_seconds",
+			expected: `
+				# HELP powerdns_authoritative_latency_average_seconds Average number of microseconds a packet spends within PowerDNS
+				# TYPE powerdns_authoritative_latency_average_seconds gauge
+				powerdns_authoritative_latency_average_seconds 0.001308
+			`,
+		},
+		{
+			metricName: "powerdns_authoritative_queries_nxdomain",
+			expected: `
+				# HELP powerdns_authoritative_queries_nxdomain Queries for non-existent records within existent domains
+				# TYPE powerdns_authoritative_queries_nxdomain counter
+				powerdns_authoritative_queries_nxdomain{record="abc.de/DS"} 10
+				powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/A"} 12
+				powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/AAAA"} 12
+			`,
+		},
+	}
+
+	for _, tc := range testCases {
+		err = testutil.CollectAndCompare(e, strings.NewReader(tc.expected), tc.metricName)
+		assert.NoError(t, err)
+	}
+}
+
 func BenchmarkExtract(b *testing.B) {
 	config, err := ioutil.ReadFile("test/recursor_stats.json")
 	if err != nil {
@@ -206,8 +268,9 @@ func BenchmarkExtract(b *testing.B) {
 	defer h.Close()
 
 	hostURL, _ := url.Parse(h.URL)
+	v41, _ := version.NewVersion("4.1.0")
 
-	e := NewExporter("12345", "recursor", hostURL)
+	e := NewExporter("12345", "recursor", v41, hostURL)
 
 	var before, after runtime.MemStats
 	runtime.GC()
