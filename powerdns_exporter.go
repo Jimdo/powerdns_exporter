@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -55,11 +56,53 @@ type ServerInfo struct {
 	ZonesUrl   string `json:"zones_url"`
 }
 
-// StatsEntry is used to parse JSON data from 'server/localhost/statistics' endpoint
+// StatsEntry contains the Item property which contains the actual item
 type StatsEntry struct {
+	Item interface{}
+}
+
+// StatisticItemEntry holds values of ring and map statistic items
+type StatisticItemEntry struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value,string"`
+}
+
+// StatisticItem contains just one value
+type StatisticItem struct {
 	Name  string  `json:"name"`
 	Kind  string  `json:"type"`
 	Value float64 `json:"value,string"`
+}
+
+// StatisticCollectionItem holds ring and map statistic items
+type StatisticCollectionItem struct {
+	Name  string               `json:"name"`
+	Kind  string               `json:"type"`
+	Value []StatisticItemEntry `json:"value,string"`
+}
+
+// UnmarshalJSON dynamically parses statistic items based on their type
+func (d *StatsEntry) UnmarshalJSON(data []byte) error {
+	var typ struct {
+		Kind string `json:"type"`
+	}
+
+	if err := json.Unmarshal(data, &typ); err != nil {
+		return err
+	}
+
+	switch typ.Kind {
+	case "StatisticItem":
+		d.Item = new(StatisticItem)
+	case "RingStatisticItem":
+		fallthrough
+	case "MapStatisticItem":
+		d.Item = new(StatisticCollectionItem)
+	default:
+		return errors.New("Unsupported Statistic Type")
+	}
+
+	return json.Unmarshal(data, d.Item)
 }
 
 // Exporter collects PowerDNS stats from the given HostURL and exports them using
@@ -204,9 +247,14 @@ func (e *Exporter) scrape() []StatsEntry {
 
 func (e *Exporter) collectMetrics(ch chan<- prometheus.Metric, stats []StatsEntry) {
 	statsMap := make(map[string]float64)
+
 	for _, s := range stats {
-		statsMap[s.Name] = s.Value
+		switch item := s.Item.(type) {
+		case *StatisticItem:
+			statsMap[item.Name] = item.Value
+		}
 	}
+
 	if len(statsMap) == 0 {
 		return
 	}
