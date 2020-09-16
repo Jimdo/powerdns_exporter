@@ -16,9 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"errors"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/log"
+	"github.com/hashicorp/go-version"
 )
 
 const (
@@ -55,11 +58,62 @@ type ServerInfo struct {
 	ZonesUrl   string `json:"zones_url"`
 }
 
-// StatsEntry is used to parse JSON data from 'server/localhost/statistics' endpoint
+// Stats entry is a container for a realy statistic item. The Item property contains the actual item.
 type StatsEntry struct {
+    Item interface{}
+}
+
+// Contains a primitive statistic item that contains just one value
+type StatisticItem struct {
 	Name  string  `json:"name"`
 	Kind  string  `json:"type"`
 	Value float64 `json:"value,string"`
+}
+
+// Contains a ring statistic item which holds up to Size entries at max. For every entry, it holds a counter value.
+// Number and name of of the items can change during operation.
+type RingStatisticItem struct {
+	Name  string  `json:"name"`
+	Kind  string  `json:"type"`
+	Size int64 `json:"size,string"`
+	Value []StatisticItemEntry `json:"value,string"`
+}
+
+// Contains a map statistic item which holds multiple values with static keys.
+type MapStatisticItem struct {
+	Name  string  `json:"name"`
+	Kind  string  `json:"type"`
+	Value []StatisticItemEntry `json:"value,string"`
+}
+
+// Actual Values of ring and map statistic items
+type StatisticItemEntry struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value,string"`
+}
+
+// Used to dynamically parse statistic items based on their type
+func (d *StatsEntry) UnmarshalJSON(data []byte) error {
+    var typ struct {
+        Kind string `json:"type"`
+    }
+
+    if err := json.Unmarshal(data, &typ); err != nil {
+        return err
+    }
+
+    switch typ.Kind {
+    case "StatisticItem":
+        d.Item = new(StatisticItem)
+    case "RingStatisticItem":
+        d.Item = new(RingStatisticItem)
+    case "MapStatisticItem":
+        d.Item = new(MapStatisticItem)
+	default:
+		return errors.New("Unsupported Statistic Type")
+    }
+
+    return json.Unmarshal(data, d.Item)
 }
 
 // Exporter collects PowerDNS stats from the given HostURL and exports them using
@@ -75,8 +129,10 @@ type Exporter struct {
 	jsonParseFailures prometheus.Counter
 	gaugeMetrics      map[int]prometheus.Gauge
 	counterMetrics    map[int]*prometheus.Desc
+	simpleCounterMetrics    map[int]*prometheus.Desc
 	gaugeDefs         []gaugeDefinition
 	counterDefs       []counterDefinition
+	simpleCounterDefs []simpleCounterDefinition
 	client            *http.Client
 }
 
@@ -92,13 +148,16 @@ func newGaugeMetric(serverType, metricName, docString string) prometheus.Gauge {
 }
 
 // NewExporter returns an initialized Exporter.
-func NewExporter(apiKey, serverType string, hostURL *url.URL) *Exporter {
+func NewExporter(apiKey, serverType string, serverVersion *version.Version, hostURL *url.URL) *Exporter {
 	var gaugeDefs []gaugeDefinition
 	var counterDefs []counterDefinition
+	var simpleCounterDefs []simpleCounterDefinition
 
 	gaugeMetrics := make(map[int]prometheus.Gauge)
 	counterMetrics := make(map[int]*prometheus.Desc)
+	simpleCounterMetrics := make(map[int]*prometheus.Desc)
 
+	simpleCounterDefs = []simpleCounterDefinition {}
 	switch serverType {
 	case "recursor":
 		gaugeDefs = recursorGaugeDefs
@@ -106,6 +165,10 @@ func NewExporter(apiKey, serverType string, hostURL *url.URL) *Exporter {
 	case "authoritative":
 		gaugeDefs = authoritativeGaugeDefs
 		counterDefs = authoritativeCounterDefs
+		var v42, _ = version.NewVersion("4.2.0")
+		if serverVersion.GreaterThanOrEqual(v42) {
+			simpleCounterDefs = authoritativeSimpleCounterDefs
+		}
 	case "dnsdist":
 		gaugeDefs = dnsdistGaugeDefs
 		counterDefs = dnsdistCounterDefs
@@ -124,6 +187,19 @@ func NewExporter(apiKey, serverType string, hostURL *url.URL) *Exporter {
 			),
 			def.desc,
 			[]string{def.label},
+			nil,
+		)
+	}
+
+	for _, def := range simpleCounterDefs {
+		simpleCounterMetrics[def.id] = prometheus.NewDesc(
+			prometheus.BuildFQName(
+				namespace,
+				serverType,
+				def.name,
+			),
+			def.desc,
+			[]string{def.labelName},
 			nil,
 		)
 	}
@@ -152,8 +228,10 @@ func NewExporter(apiKey, serverType string, hostURL *url.URL) *Exporter {
 		}),
 		gaugeMetrics:   gaugeMetrics,
 		counterMetrics: counterMetrics,
+		simpleCounterMetrics: simpleCounterMetrics,
 		gaugeDefs:      gaugeDefs,
 		counterDefs:    counterDefs,
+		simpleCounterDefs: simpleCounterDefs,
 	}
 }
 
@@ -161,6 +239,9 @@ func NewExporter(apiKey, serverType string, hostURL *url.URL) *Exporter {
 // implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	for _, m := range e.counterMetrics {
+		ch <- m
+	}
+	for _, m := range e.simpleCounterMetrics {
 		ch <- m
 	}
 	for _, m := range e.gaugeMetrics {
@@ -204,8 +285,16 @@ func (e *Exporter) scrape() []StatsEntry {
 
 func (e *Exporter) collectMetrics(ch chan<- prometheus.Metric, stats []StatsEntry) {
 	statsMap := make(map[string]float64)
+	simpleStatsMap := make(map[string][]StatisticItemEntry)
 	for _, s := range stats {
-		statsMap[s.Name] = s.Value
+		switch item := s.Item.(type) {
+		case *StatisticItem:
+			statsMap[item.Name] = item.Value
+		case *RingStatisticItem:
+			simpleStatsMap[item.Name] = item.Value
+		case *MapStatisticItem:
+			simpleStatsMap[item.Name] = item.Value
+		}
 	}
 	if len(statsMap) == 0 {
 		return
@@ -219,6 +308,17 @@ func (e *Exporter) collectMetrics(ch chan<- prometheus.Metric, stats []StatsEntr
 			}
 			e.gaugeMetrics[def.id].Set(value)
 			ch <- e.gaugeMetrics[def.id]
+		} else {
+			log.Errorf("Expected PowerDNS stats key not found: %s", def.key)
+			e.jsonParseFailures.Inc()
+		}
+	}
+
+	for _, def := range e.simpleCounterDefs {
+		if items, ok := simpleStatsMap[def.key]; ok {
+			for _, item := range items {
+				ch <- prometheus.MustNewConstMetric(e.simpleCounterMetrics[def.id], prometheus.CounterValue, item.Value, item.Name)
+			}
 		} else {
 			log.Errorf("Expected PowerDNS stats key not found: %s", def.key)
 			e.jsonParseFailures.Inc()
@@ -311,7 +411,12 @@ func main() {
 		log.Fatalf("Could not fetch PowerDNS server info: %v", err)
 	}
 
-	exporter := NewExporter(*apiKey, server.DaemonType, hostURL)
+	version, err := version.NewVersion(server.Version)
+	if err != nil {
+		log.Fatalf("Could not parse PowerDNS server version: %v", err)
+	}
+
+	exporter := NewExporter(*apiKey, server.DaemonType, version, hostURL)
 	prometheus.MustRegister(exporter)
 
 	log.Infof("Starting Server: %s", *listenAddress)
