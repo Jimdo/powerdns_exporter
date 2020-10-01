@@ -188,30 +188,6 @@ var (
 		simpleCounterDefinition{
 			2, "response_rcodes", "Distribution of rcodes", "rcode", "response-by-rcode",
 		},
-		simpleCounterDefinition{
-			3, "remote_queries", "Remote server IP addresses", "remote", "remotes",
-		},
-		simpleCounterDefinition{
-			4, "remote_queries_unauth", "Remote hosts querying domains for which we are not auth", "remote", "remotes-unauth",
-		},
-		simpleCounterDefinition{
-			5, "remote_queries_corrupt", "Remote hosts sending corrupt packets", "remote", "remotes-corrupt",
-		},
-		simpleCounterDefinition{
-			6, "queries", "UDP Queries Received", "record", "queries",
-		},
-		simpleCounterDefinition{
-			7, "queries_noerror", "Queries for existing records, but for type we don't have", "record", "noerror-queries",
-		},
-		simpleCounterDefinition{
-			8, "queries_unauth", "Queries for domains that we are not authoritative for", "record", "unauth-queries",
-		},
-		simpleCounterDefinition{
-			9, "queries_nxdomain", "Queries for non-existent records within existent domains", "record", "nxdomain-queries",
-		},
-		simpleCounterDefinition{
-			10, "queries_servfail", "Queries that could not be answered due to backend errors", "record", "servfail-queries",
-		},
 	}
 )
 
