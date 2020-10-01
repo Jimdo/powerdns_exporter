@@ -206,7 +206,7 @@ func TestCollectAuthoritativeMetrics41(t *testing.T) {
 }
 
 func TestCollectAuthoritativeMetrics42(t *testing.T) {
-	config, err := ioutil.ReadFile("test/authoritative_stats_42.json")
+	config, err := ioutil.ReadFile("test/authoritative_stats_42_without_ring_statistics.json")
 	if err != nil {
 		t.Fatalf("could not read config file: %v", err.Error())
 	}
@@ -240,16 +240,16 @@ func TestCollectAuthoritativeMetrics42(t *testing.T) {
 				powerdns_authoritative_latency_average_seconds 0.001308
 			`,
 		},
-		{
-			metricName: "powerdns_authoritative_queries_nxdomain",
-			expected: `
-				# HELP powerdns_authoritative_queries_nxdomain Queries for non-existent records within existent domains
-				# TYPE powerdns_authoritative_queries_nxdomain counter
-				powerdns_authoritative_queries_nxdomain{record="abc.de/DS"} 10
-				powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/A"} 12
-				powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/AAAA"} 12
-			`,
-		},
+		//{
+		//	metricName: "powerdns_authoritative_queries_nxdomain",
+		//	expected: `
+		//		# HELP powerdns_authoritative_queries_nxdomain Queries for non-existent records within existent domains
+		//		# TYPE powerdns_authoritative_queries_nxdomain counter
+		//		powerdns_authoritative_queries_nxdomain{record="abc.de/DS"} 10
+		//		powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/A"} 12
+		//		powerdns_authoritative_queries_nxdomain{record="nx.a.b.c/AAAA"} 12
+		//	`,
+		//},
 	}
 
 	for _, tc := range testCases {
